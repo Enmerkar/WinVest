@@ -1,6 +1,6 @@
 setwd("~/WinVest")
 
-# cleans neighbouring signs
+# cleans neighbouring signs - experiment with n=3 and n=5
 encrisp <- function(x, n=5) {sign(filter(x, rep(1, n), sides=2))}
 run_encrisp <- function(corr) {
   pattern.a <- corr
@@ -12,6 +12,9 @@ run_encrisp <- function(corr) {
     pattern.b <- encrisp(pattern.a)
     pattern.b <- ifelse(is.na(pattern.b),0,pattern.b)
   }
+  lag <- c(pattern.a[-1],NA)
+  pattern.a <- ifelse(pattern.a==0,lag,pattern.a)
+  pattern.a[length(pattern.a)]=0
   pattern.a
 }
 # removes correlated signs
@@ -32,7 +35,7 @@ run_shed <- function(crisp) {
 
 # output
 patterns <- data.frame('exchange.stock', 0.5, 0.5, 5, 0)
-colnames(patterns) <- c('stock', 'correlation', 'volatility', 'period', 'buy')
+colnames(patterns) <- c('stock', 'correlation', 'amplitude', 'period', 'buy')
 
 analyseStock <- function (stock) {
   
@@ -183,20 +186,47 @@ analyseStock <- function (stock) {
   data.3$extrema.4 <- ifelse(data.3$crisp.4==1,data.3$high-data.3$model.4,ifelse(data.3$crisp.4==(-1),data.3$low-data.3$model.4,0))
   
   # remove repeated entries in corr until only the pattern of 1,0,-1 remains
-  pattern.3.1 <- run_shed(crisp.3.1)
+  pattern.3.1 <- run_shed(data.3$crisp.1)
+  pattern.3.2 <- run_shed(data.3$crisp.2)
+  pattern.3.3 <- run_shed(data.3$crisp.3)
+  pattern.3.4 <- run_shed(data.3$crisp.4)
+  
+  # Need to give each region a factor label
+  # Then extract max/min extrema from each region
+  # I only need to pass over each vector once
+  region <- function (pattern, crisp) {
+    l <- length(crisp)
+    m <- 1
+    n <- 1
+    lag <- c(NA,crisp[-l])
+    region <- vector(length=l)
+    while (n <= l) {
+      if (n>1 && crisp[n]==(-1*lag[n])) {m <- m+1}
+      if (abs(crisp[n]) != 1) {
+        region[n] = 0
+      } else {
+        region[n] = m
+      }
+      n <- n+1
+    }
+    as.factor(region)
+  }
+  
+  # Overall correlation coefficents
+  corr.3.1 <- sum(abs(data.3$corr.1), na.rm=TRUE)/(nrow(data.3)-1)
+  corr.3.2 <- sum(abs(data.3$corr.2), na.rm=TRUE)/(nrow(data.3)-1)
+  corr.3.3 <- sum(abs(data.3$corr.3), na.rm=TRUE)/(nrow(data.3)-1)
+  corr.3.4 <- sum(abs(data.3$corr.4), na.rm=TRUE)/(nrow(data.3)-1)
+  
+  # Overall amplitude coefficients
+  
+  
+  # Buy Index: measure of closeness to minimum (1 to -1) of cycle.
+  
   
   # choose only patterns which have a minimum number of appropriate oscillations
   # e.g. at least 2 swings but no more than 10.
   
-  
-  # Correlation: fewer 0's is more correlated. Set maximum of say 10% 0's.
-  # Calculate this from raw, not filtered, correlation data
-  
-  # Volatility: alternating regions of 1's and -1's. Calculated from shedded data.
-  
-  # Buy Index: measure of closeness to minimum (1 to -1) of cycle.
-  
-  data
   
   # return good patterns
   #if(corr3>0.5 && vol3>0.5) patterns <- rbind(patterns, c(stock, corr3, vol3, per3, buy))
