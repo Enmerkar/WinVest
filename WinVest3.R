@@ -1,3 +1,5 @@
+library(doParallel)
+
 setwd("~/WinVest")
 
 # cleans neighbouring signs - experiment with n=3 and n=5
@@ -56,10 +58,10 @@ set_regions <- function (crisp) {
 analyseStock <- function (stock, window, order) {
   
   # Run timestamp
-  date <- date()
+  date <- format(Sys.time(), "%Y-%m-%d_%H-%M-%S")
   
   # Import data
-  raw <- read.csv(paste(stock,'.csv', sep=''), header=TRUE)
+  raw <- read.csv(paste('~/WinVest/data/',stock,'.csv', sep=''), header=TRUE)
   raw <- raw[nrow(raw):1,] # reverse order
   
   # Cut to specified window
@@ -132,8 +134,7 @@ analyseStock <- function (stock, window, order) {
 run_analyses <- function (stocks, windows, orders) {
   
   # output dataframe
-  patterns <- data.frame('exchange.stock', date(), 0, 0, 0, 0, 0, 0, 0, 0)
-  colnames(patterns) <- c('stock', 'date', 'window', 'order', 'correlation', 'swings', 'period', 'amplitude', 'profit', 'buy')
+  patterns <- data.frame(stock=character(0), date=character(0), window=numeric(0), order=numeric(0), correlation=numeric(0), swings=numeric(0), period=numeric(0), amplitude=numeric(0), profit=numeric(0), buy=numeric(0))
   
   for (i in 1:length(stocks)) {
     for (j in 1:length(windows)) {
@@ -149,11 +150,15 @@ run_analyses <- function (stocks, windows, orders) {
   
 }
 
-stocks <- c('ASX.SLX','ASX.QAN')
+stocks <- list.files('~/WinVest/data', full.names=FALSE)
+stocks <- sub('.csv', '', stocks)
 windows <- c(60,120,180,240)
 orders <- c(1,2,3,4)
 
-patterns <- run_analyses(stocks, windows, orders)
+registerDoParallel(detectCores())
+patterns <- foreach (i=1:length(stocks), .combine=rbind) %dopar% run_analyses(stocks[i], windows, orders)
+write.csv(patterns, file=paste('~/WinVest/latest/PATTERNS_', format(Sys.time(), "%Y-%m-%d_%H-%M-%S"), '.csv', sep=''), quote=FALSE, row.names=FALSE)
+write.csv(patterns, file=paste('~/WinVest/historical/PATTERNS_', format(Sys.time(), "%Y-%m-%d_%H-%M-%S"), '.csv', sep=''), quote=FALSE, row.names=FALSE)
 
 # Filter patterns by minimum acceptable values (correlation>0.7, swings>3, profit>0.1)
 # Users may sort patterns by:

@@ -1,0 +1,202 @@
+
+R version 3.2.2 (2015-08-14) -- "Fire Safety"
+Copyright (C) 2015 The R Foundation for Statistical Computing
+Platform: x86_64-w64-mingw32/x64 (64-bit)
+
+R is free software and comes with ABSOLUTELY NO WARRANTY.
+You are welcome to redistribute it under certain conditions.
+Type 'license()' or 'licence()' for distribution details.
+
+  Natural language support but running in an English locale
+
+R is a collaborative project with many contributors.
+Type 'contributors()' for more information and
+'citation()' on how to cite R or R packages in publications.
+
+Type 'demo()' for some demos, 'help()' for on-line help, or
+'help.start()' for an HTML browser interface to help.
+Type 'q()' to quit R.
+
+[Previously saved workspace restored]
+
+> library(doParallel)
+Loading required package: foreach
+Loading required package: iterators
+Loading required package: parallel
+> 
+> setwd("~/WinVest")
+> 
+> # cleans neighbouring signs - experiment with n=3 and n=5
+> encrisp <- function(x, n=5) {sign(filter(x, rep(1, n), sides=2))}
+> run_encrisp <- function(corr) {
++   pattern.a <- corr
++   pattern.a <- ifelse(is.na(pattern.a),0,pattern.a)
++   pattern.b <- encrisp(pattern.a)
++   pattern.b <- ifelse(is.na(pattern.b),0,pattern.b)
++   while (any(pattern.a != pattern.b)) {
++     pattern.a <- pattern.b
++     pattern.b <- encrisp(pattern.a)
++     pattern.b <- ifelse(is.na(pattern.b),0,pattern.b)
++   }
++   lag <- c(pattern.a[-1],NA)
++   pattern.a <- ifelse(pattern.a==0,lag,pattern.a)
++   pattern.a[length(pattern.a)]=0
++   pattern.a
++ }
+> 
+> # removes correlated signs
+> shed <- function(x) {
++   lag <- c(NA,x[-length(x)])
++   remove <- ifelse(x==lag,FALSE,TRUE)*seq(1:length(x))
++   x[remove]
++ }
+> run_shed <- function(crisp) {
++   pattern.a <- crisp
++   pattern.b <- shed(pattern.a)
++   while(length(pattern.a) != length(pattern.b)) {
++     pattern.a <- pattern.b
++     pattern.b <- shed(pattern.a)
++   }
++   pattern.a[2:(length(pattern.a)-1)]
++ }
+> 
+> # creates factor labels for correlated regions
+> set_regions <- function (crisp) {
++   l <- length(crisp)
++   m <- 1
++   n <- 1
++   lag <- c(NA,crisp[-l])
++   region <- vector(length=l)
++   while (n <= l) {
++     if (n>1 && crisp[n]==(-1*lag[n])) {m <- m+1}
++     if (abs(crisp[n]) != 1) {
++       region[n] = 0
++     } else {
++       region[n] = m
++     }
++     n <- n+1
++   }
++   as.factor(region)
++ }
+> 
+> analyseStock <- function (stock, window, order) {
++   
++   # Run timestamp
++   date <- format(Sys.time(), "%Y-%m-%d_%H-%M-%S")
++   
++   # Import data
++   raw <- read.csv(paste('~/WinVest/data/',stock,'.csv', sep=''), header=TRUE)
++   raw <- raw[nrow(raw):1,] # reverse order
++   
++   # Cut to specified window
++   data <- data.frame(seq(1:window), raw$Close[seq(nrow(raw)-(window-1), nrow(raw))], raw$High[seq(nrow(raw)-(window-1), nrow(raw))], raw$Low[seq(nrow(raw)-(window-1), nrow(raw))])
++   colnames(data) <- c('day','close','high','low')
++   na.omit(data)
++   window <- nrow(data)
++   
++   # Fit polynomial of specified order
++   fit <- lm(close~poly(day,order,raw=TRUE), data)
++   
++   # Get the predicted from the models
++   data$model <- fit$fitted.values
++   
++   # Get current trend/slope - I think this is too simplistic and will rule out appropriate trends
++   #trend <- (data$model[window]-data$model[window-1])/data$model[window-1]
++   
++   # Get the residuals from the models
++   data$resid <- fit$residuals
++   
++   # Lag the residuals
++   data$resid.lag <- c(NA,data$resid[-window])
++   
++   # Calculate daily correlations
++   data$corr <- ifelse(sign(data$resid)==sign(data$resid.lag),sign(data$resid),0)
++   
++   # Overall correlation coefficents
++   correlation <- sum(abs(data$corr), na.rm=TRUE)/(window-1)
++   
++   # Clean correlations until they are smooth and stable
++   data$crisp <- run_encrisp(data$corr)
++   
++   # Need to give each region a factor label
++   data$region <- set_regions(data$crisp)
++   
++   # average period length of regions
++   period <- mean(as.vector(table(data$region))[-1])
++   
++   # Get max/min extrema according to correlations
++   data$extrema <- ifelse(data$crisp==1,data$high-data$model,ifelse(data$crisp==(-1),data$low-data$model,0))
++   
++   # remove repeated entries in corr until only the pattern of 1,0,-1 remains
++   pattern <- run_shed(data$crisp)
++   
++   # count swings
++   swings <- length(pattern)
++   
++   # replicate region factors for patterns
++   region <- as.factor(seq(1:swings))
++   
++   # Then extract max/min extrema from each region
++   extrema <- as.vector(aggregate(abs(data$extrema), by=list(data$region), FUN=max))[-1,2]*pattern
++   
++   # Overall amplitude coefficients
++   amplitude <- mean(abs(diff(extrema, lag=1, differences=1)))
++   
++   # Profit: expected return for buy-sell difference of Amplitude
++   profit <- (data$model[window]+(amplitude/2))/(data$model[window]-(amplitude/2))-1
++   
++   # Buy Index: measure of closeness to minimum of cycle.
++   # 1 means current price is at trough of cycle - ideal time to buy
++   # -1 means current price is at peak of cycle - ideal time to sell
++   buy <- data$resid[window]/(amplitude/-2)
++   
++   # Return aggregate information
++   cbind(stock, date, window, order, correlation, swings, period, amplitude, profit, buy)
++   
++ }
+> 
+> run_analyses <- function (stocks, windows, orders) {
++   
++   # output dataframe
++   patterns <- data.frame(stock=character(0), date=character(0), window=numeric(0), order=numeric(0), correlation=numeric(0), swings=numeric(0), period=numeric(0), amplitude=numeric(0), profit=numeric(0), buy=numeric(0))
++   
++   for (i in 1:length(stocks)) {
++     for (j in 1:length(windows)) {
++       for (k in 1:length(orders)) {
++         pattern <- analyseStock(stocks[i], windows[j], orders[k])
++         patterns <- rbind(patterns, pattern)
++       }
++     }
++   }
++   
++   # return
++   patterns
++   
++ }
+> 
+> stocks <- list.files('~/WinVest/data', full.names=FALSE)
+> stocks <- sub(".csv", "", stocks)
+> windows <- c(60,120,180,240)
+> orders <- c(1,2,3,4)
+> 
+> registerDoParallel(detectCores())
+> patterns <- foreach (i=1:length(stocks), .combine=rbind) %dopar% run_analyses(stocks[i], windows, orders)
+> write.csv(patterns, file=paste('~/WinVest/latest/PATTERNS_', format(Sys.time(), "%Y-%m-%d_%H-%M-%S"), '.csv', sep=''), quote=FALSE, row.names=FALSE)
+> write.csv(patterns, file=paste('~/WinVest/historical/PATTERNS_', format(Sys.time(), "%Y-%m-%d_%H-%M-%S"), '.csv', sep=''), quote=FALSE, row.names=FALSE)
+> 
+> # Filter patterns by minimum acceptable values (correlation>0.7, swings>3, profit>0.1)
+> # Users may sort patterns by:
+> # a. Best Candidates (profit/period)
+> # b. Best Today (buy index)
+> # c. Highest Profit (profit)
+> # d. Fastest Profit (period)
+> # Users may filter patterns by:
+> # a. Industry
+> # b. Exchange
+> # c. Country
+> 
+> proc.time()
+   user  system elapsed 
+   0.42    0.15    3.46 
+Error in summary.connection(connection) : invalid connection
+Calls: <Anonymous> ... sendData.SOCKnode -> serialize -> summary -> summary.connection

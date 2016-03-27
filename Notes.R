@@ -1,1 +1,0 @@
-# Perform daily analysis with %dopar%
