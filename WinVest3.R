@@ -55,6 +55,9 @@ set_regions <- function (crisp) {
 
 analyseStock <- function (stock, window, order) {
   
+  # Run timestamp
+  date <- date()
+  
   # Import data
   raw <- read.csv(paste(stock,'.csv', sep=''), header=TRUE)
   raw <- raw[nrow(raw):1,] # reverse order
@@ -62,13 +65,17 @@ analyseStock <- function (stock, window, order) {
   # Cut to specified window
   data <- data.frame(seq(1:window), raw$Close[seq(nrow(raw)-(window-1), nrow(raw))], raw$High[seq(nrow(raw)-(window-1), nrow(raw))], raw$Low[seq(nrow(raw)-(window-1), nrow(raw))])
   colnames(data) <- c('day','close','high','low')
+  na.omit(data)
   window <- nrow(data)
   
   # Fit polynomial of specified order
-  fit <- lm(close~poly(day,1,raw=TRUE), data)
+  fit <- lm(close~poly(day,order,raw=TRUE), data)
   
   # Get the predicted from the models
   data$model <- fit$fitted.values
+  
+  # Get current trend/slope - I think this is too simplistic and will rule out appropriate trends
+  #trend <- (data$model[window]-data$model[window-1])/data$model[window-1]
   
   # Get the residuals from the models
   data$resid <- fit$residuals
@@ -80,7 +87,7 @@ analyseStock <- function (stock, window, order) {
   data$corr <- ifelse(sign(data$resid)==sign(data$resid.lag),sign(data$resid),0)
   
   # Overall correlation coefficents
-  corr <- sum(abs(data$corr), na.rm=TRUE)/(window-1)
+  correlation <- sum(abs(data$corr), na.rm=TRUE)/(window-1)
   
   # Clean correlations until they are smooth and stable
   data$crisp <- run_encrisp(data$corr)
@@ -109,29 +116,30 @@ analyseStock <- function (stock, window, order) {
   # Overall amplitude coefficients
   amplitude <- mean(abs(diff(extrema, lag=1, differences=1)))
   
+  # Profit: expected return for buy-sell difference of Amplitude
+  profit <- (data$model[window]+(amplitude/2))/(data$model[window]-(amplitude/2))-1
+  
   # Buy Index: measure of closeness to minimum of cycle.
   # 1 means current price is at trough of cycle - ideal time to buy
   # -1 means current price is at peak of cycle - ideal time to sell
-  buy <- data$resid[length(data$resid)]/(amplitude/-2)
+  buy <- data$resid[window]/(amplitude/-2)
   
   # Return aggregate information
-  cbind(stock, date(), corr, swings, amplitude, period, buy)
+  cbind(stock, date, window, order, correlation, swings, period, amplitude, profit, buy)
   
 }
 
 run_analyses <- function (stocks, windows, orders) {
   
   # output dataframe
-  patterns <- data.frame('exchange.stock', date(), 0.5, 5, 0.5, 5, 0)
-  colnames(patterns) <- c('stock', 'date', 'correlation', 'swings', 'amplitude', 'period', 'buy')
+  patterns <- data.frame('exchange.stock', date(), 0, 0, 0, 0, 0, 0, 0, 0)
+  colnames(patterns) <- c('stock', 'date', 'window', 'order', 'correlation', 'swings', 'period', 'amplitude', 'profit', 'buy')
   
   for (i in 1:length(stocks)) {
     for (j in 1:length(windows)) {
       for (k in 1:length(orders)) {
-        
         pattern <- analyseStock(stocks[i], windows[j], orders[k])
         patterns <- rbind(patterns, pattern)
-        
       }
     }
   }
@@ -145,7 +153,15 @@ stocks <- c('ASX.SLX','ASX.QAN')
 windows <- c(60,120,180,240)
 orders <- c(1,2,3,4)
 
-patterns <- run_analyses(stocks,windows,orders)
+patterns <- run_analyses(stocks, windows, orders)
 
-pattern <- analyseStock('ASX.SLX', 60, 2)
-patterns <- rbind(patterns, pattern)
+# Filter patterns by minimum acceptable values (correlation>0.7, swings>3, profit>0.1)
+# Users may sort patterns by:
+# a. Best Candidates (profit/period)
+# b. Best Today (buy index)
+# c. Highest Profit (profit)
+# d. Fastest Profit (period)
+# Users may filter patterns by:
+# a. Industry
+# b. Exchange
+# c. Country
